@@ -288,18 +288,23 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         state = self._read_state(cache_dir) or {}
         last_run = state.get("last_run", "아직 실행 안 됨")
         last_result = state.get("last_result") or {}
+        last_summary = (
+            f"{last_result.get('mode', '-')} / 삭제 {last_result.get('deleted_count', 0)}건"
+            if last_result else "-"
+        )
 
+        # 대시보드 위젯 아이템은 "도서 카드" 스키마(title/author/publisher/cover_image)로
+        # 고정 렌더링되므로, label/value 대신 title 한 줄에 텍스트를 담아 전달한다.
+        # book_id/file_format/series_name/link를 넣지 않아야 클릭 시 엉뚱한 뷰어/상세화면으로
+        # 튀지 않는다 (Widget Item Click Contract 참고).
         items = [
-            {"label": "캐시 경로", "value": cache_dir},
-            {"label": "총 용량(GB)", "value": size_gb},
-            {"label": "총 파일 수", "value": len(entries)},
-            {"label": f"{int(max_age_hours)}시간 이상 경과 파일", "value": stale_count},
-            {"label": "다음 자동 점검 주기(분)", "value": int(interval_min)},
-            {"label": "마지막 실행", "value": last_run},
-            {
-                "label": "마지막 실행 결과",
-                "value": f"{last_result.get('mode', '-')} / 삭제 {last_result.get('deleted_count', 0)}건",
-            },
+            {"title": f"📁 캐시 경로: {cache_dir}", "author": " ", "publisher": " "},
+            {"title": f"💾 총 용량: {size_gb} GB (기준 {max_size_gb}GB)", "author": " ", "publisher": " "},
+            {"title": f"🗂 총 파일 수: {len(entries)}개", "author": " ", "publisher": " "},
+            {"title": f"⏳ {int(max_age_hours)}시간 이상 경과 파일: {stale_count}개", "author": " ", "publisher": " "},
+            {"title": f"🔄 자동 점검 주기: {int(interval_min)}분", "author": " ", "publisher": " "},
+            {"title": f"🕒 마지막 실행: {last_run}", "author": " ", "publisher": " "},
+            {"title": f"✅ 마지막 결과: {last_summary}", "author": " ", "publisher": " "},
         ]
 
         return {"success": True, "items": items[:limit] if limit else items}
