@@ -8,16 +8,31 @@ cache_cleaner 플러그인
 조건 02: cache 폴더 전체 용량이 설정 임계값(기본 10GB) 이상 -> 폴더 내 파일 전체 삭제
 (두 조건은 OR. 단, 조건 02가 만족되면 조건 01은 무시하고 전체 삭제)
 
-## 실행 시점 확인 방법
-이 플러그인은 "조회할 때만 상태를 보여주는" 방식이 아니라, 내부적으로
-백그라운드 스레드를 하나 띄워 CHECK_INTERVAL_MINUTES 주기로 스스로
-clean_cache()를 호출합니다. 실행 여부는 아래 두 곳에서 확인 가능합니다.
+## 실행 방식 (APScheduler 연동)
+자체 스레드로 time.sleep 루프를 도는 대신, 코어가 이미 쓰고 있는
+`services.scheduler_service.scheduler` (APScheduler BackgroundScheduler)
+싱글톤에 잡을 등록해서 실행한다. 라이브러리 스캔 잡과 동일한 방식이며,
+CRON_SCHEDULE 설정값을 주면 `CronTrigger.from_crontab()`으로 진짜 crontab
+표현식을 그대로 쓸 수 있고, 비워두면 CHECK_INTERVAL_MINUTES 기반의 단순
+반복(IntervalTrigger)으로 동작한다. 타임존도 코어 설정(TIMEZONE)을 그대로
+따른다.
 
-  1) 대시보드 위젯: 마지막 실행 시각 / 다음 실행 예정 시각 / 마지막 결과
-  2) 로그 파일: <CACHE_DIR>/../cache_cleaner.log 에 실행마다 한 줄씩 기록
+주의: 코어의 `SchedulerService.reload_all_jobs()`는 호출될 때마다 등록된
+잡을 전부 지우고 라이브러리 스캔 잡만 재등록한다. 그래서 cache_cleaner
+잡도 다른 라이브러리 작업(추가/수정 등)으로 reload가 발생하면 같이
+지워질 수 있다. 이를 막기 위해 5분마다 잡 생존 여부만 가볍게 확인해서
+없으면 재등록하는 워치독 스레드를 별도로 둔다 (실제 정리 작업은 여전히
+APScheduler가 수행하고, 워치독은 등록 상태만 감시).
+
+`services.scheduler_service`를 못 불러오는 환경(플러그인 샌드박스 등)이면
+예전처럼 자체 스레드 루프로 폴백한다.
+
+실행 여부는 아래에서 확인 가능하다.
+  1) 설정 화면(ui/settings.html): 마지막 실행 시각 / 결과
+  2) 로그 파일: <CACHE_DIR>/../cache_cleaner.log
      (예: [2026-08-08 03:00:01] mode=age_based deleted=12 total_before_gb=3.21)
 
-수동으로 즉시 실행하고 싶다면 clean_cache(db_type)를 직접 호출하면 됩니다.
+수동으로 즉시 실행하고 싶다면 clean_cache(db_type)를 직접 호출하면 된다.
 """
 
 import os
@@ -27,6 +42,20 @@ import threading
 from datetime import datetime
 
 from plugins.metadata.base import BaseMetadataProvider
+
+
+def run_cache_cleanup_job(db_type):
+    """
+    APScheduler가 직접 호출하는 모듈 레벨 함수.
+    코어의 run_lazy_scanner_job()과 같은 스타일(top-level 함수)로 맞췄다.
+    인스턴스 상태에 의존하지 않도록 매번 새 provider를 만들어 쓴다.
+    """
+    provider = CacheCleanerMetadataProvider()
+    try:
+        result = provider.clean_cache(db_type)
+        provider._log(db_type, result)
+    except Exception as e:
+        provider._log(db_type, {"mode": "error", "error": str(e), "deleted_count": 0, "total_size_before": 0})
 
 
 class CacheCleanerMetadataProvider(BaseMetadataProvider):
@@ -58,10 +87,17 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         },
         {
             "key": "CHECK_INTERVAL_MINUTES",
-            "label": "자동 점검 주기 (분)",
+            "label": "자동 점검 주기 (분) - CRON_SCHEDULE이 비어있을 때만 사용",
             "type": "text",
             "required": False,
             "default": "60",
+        },
+        {
+            "key": "CRON_SCHEDULE",
+            "label": "Cron 표현식 (예: 0 3 * * * = 매일 새벽 3시, 비우면 위 주기(분) 사용)",
+            "type": "text",
+            "required": False,
+            "default": "",
         },
     ]
 
@@ -75,16 +111,13 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         "show_sample_update_button": True,
     }
 
-    dashboard_widget = {
-        "title": "Cache Cleaner",
-        "subtitle": "캐시 폴더 용량/정리 현황",
-        "provider": "Cache Cleaner",
-        "icon": "fa-solid fa-broom",
-        "limit": 6,
-    }
+    # 대시보드 카드 렌더러가 "도서 카드"(title/author/publisher/cover) 틀에
+    # 고정돼 있어 통계성 정보와 안 맞으므로, 대시보드에는 노출하지 않는다.
+    # 상태 확인/실행은 설정 화면(target=settings)에서 처리한다.
+    dashboard_widget = None
 
-    # 프로세스 내에서 db_type별 스케줄러 스레드가 중복 기동되지 않도록 관리
-    _scheduler_threads = {}
+    # 워치독 스레드(잡 생존 확인용) 및 폴백 스레드(스케줄러 모듈이 없을 때) 관리
+    _watchdog_threads = {}
     _scheduler_lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -97,35 +130,128 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         return False, "cache_cleaner는 대시보드/정리 전용 플러그인입니다."
 
     # ------------------------------------------------------------------
-    # 활성화 시 스케줄러 기동
-    # 코어가 플러그인 활성화 시점에 훅을 제공한다면 그 훅에서 호출하고,
-    # 없다면 대시보드 최초 조회(get_dashboard_data) 시점에 지연 기동합니다.
+    # 활성화/비활성화 훅
+    # 코어가 플러그인 활성화 시점에 부를 훅(on_enable/on_disable)을 제공하지
+    # 않는다면, 대시보드/설정 화면 최초 조회 시점(get_status)에 지연
+    # 등록되도록 그쪽에서도 _ensure_watchdog를 호출한다.
     # ------------------------------------------------------------------
     def on_enable(self, db_type):
-        self._ensure_scheduler(db_type)
+        self._register_job(db_type)
+        self._ensure_watchdog(db_type)
 
-    def _ensure_scheduler(self, db_type):
+    def on_disable(self, db_type):
+        try:
+            from services.scheduler_service import scheduler
+            job = scheduler.get_job(self._job_id(db_type))
+            if job:
+                scheduler.remove_job(self._job_id(db_type))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _job_id(db_type):
+        return f"cache_cleaner_{db_type}"
+
+    def _build_trigger(self, db_type):
+        cfg = self.get_plugin_config(db_type, default={})
+        cron_expr = (cfg.get("CRON_SCHEDULE") or "").strip()
+        if cron_expr:
+            from apscheduler.triggers.cron import CronTrigger
+            return CronTrigger.from_crontab(cron_expr)
+        _cache_dir, _max_age, _max_size, interval_min = self._get_settings(db_type)
+        from apscheduler.triggers.interval import IntervalTrigger
+        return IntervalTrigger(minutes=max(1, int(interval_min)))
+
+    def _register_job(self, db_type):
+        """
+        코어 APScheduler 싱글톤에 잡을 등록한다. 코어 모듈을 못 불러오면
+        (예: 플러그인이 별도 프로세스/샌드박스에서 도는 경우) 예전 방식의
+        자체 스레드 루프로 폴백한다.
+        """
+        try:
+            from services.scheduler_service import scheduler
+        except Exception:
+            self._register_fallback_thread(db_type)
+            return False
+
+        try:
+            trigger = self._build_trigger(db_type)
+        except ValueError as e:
+            self._log(db_type, {"mode": "error", "error": f"잘못된 CRON_SCHEDULE: {e}",
+                                 "deleted_count": 0, "total_size_before": 0})
+            return False
+
+        try:
+            scheduler.add_job(
+                run_cache_cleanup_job,
+                trigger,
+                id=self._job_id(db_type),
+                args=[db_type],
+                replace_existing=True,
+                max_instances=1,
+            )
+            return True
+        except Exception as e:
+            self._log(db_type, {"mode": "error", "error": f"스케줄러 등록 실패: {e}",
+                                 "deleted_count": 0, "total_size_before": 0})
+            return False
+
+    def _ensure_watchdog(self, db_type):
+        """
+        5분마다 '내 잡이 아직 등록돼 있는지'만 가볍게 확인하고, 없으면
+        재등록한다. reload_all_jobs()가 모든 잡을 지우고 라이브러리 스캔
+        잡만 재등록하는 코어 동작 때문에 필요하다.
+        """
         with CacheCleanerMetadataProvider._scheduler_lock:
-            existing = CacheCleanerMetadataProvider._scheduler_threads.get(db_type)
+            existing = CacheCleanerMetadataProvider._watchdog_threads.get(db_type)
             if existing and existing.is_alive():
                 return
             t = threading.Thread(
-                target=self._scheduler_loop,
+                target=self._watchdog_loop,
                 args=(db_type,),
                 daemon=True,
-                name=f"cache-cleaner-{db_type}",
+                name=f"cache-cleaner-watchdog-{db_type}",
             )
-            CacheCleanerMetadataProvider._scheduler_threads[db_type] = t
+            CacheCleanerMetadataProvider._watchdog_threads[db_type] = t
             t.start()
 
-    def _scheduler_loop(self, db_type):
+    def _watchdog_loop(self, db_type):
+        while True:
+            try:
+                from services.scheduler_service import scheduler
+                if not scheduler.get_job(self._job_id(db_type)):
+                    self._register_job(db_type)
+            except Exception:
+                # scheduler_service를 못 불러오는 환경이면 폴백 스레드가
+                # 이미 실행 중인지만 확인한다.
+                self._register_fallback_thread(db_type)
+            time.sleep(300)
+
+    # --- 폴백: 코어 스케줄러가 없는 환경용 자체 스레드 루프 ---
+    def _register_fallback_thread(self, db_type):
+        key = f"fallback_{db_type}"
+        with CacheCleanerMetadataProvider._scheduler_lock:
+            existing = CacheCleanerMetadataProvider._watchdog_threads.get(key)
+            if existing and existing.is_alive():
+                return
+            t = threading.Thread(
+                target=self._fallback_loop,
+                args=(db_type,),
+                daemon=True,
+                name=f"cache-cleaner-fallback-{db_type}",
+            )
+            CacheCleanerMetadataProvider._watchdog_threads[key] = t
+            t.start()
+
+    def _fallback_loop(self, db_type):
         while True:
             try:
                 _cache_dir, _max_age, _max_size, interval_min = self._get_settings(db_type)
                 result = self.clean_cache(db_type)
                 self._log(db_type, result)
-            except Exception as e:  # 스케줄러는 절대 죽지 않도록 방어
-                self._log(db_type, {"mode": "error", "error": str(e)})
+            except Exception as e:
+                self._log(db_type, {"mode": "error", "error": str(e),
+                                     "deleted_count": 0, "total_size_before": 0})
                 interval_min = 60
             time.sleep(max(1, interval_min) * 60)
 
@@ -270,11 +396,27 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         }
 
     # ------------------------------------------------------------------
-    # 대시보드 데이터
+    # 상태 데이터 (설정 화면 JS가 소비)
     # ------------------------------------------------------------------
-    def get_dashboard_data(self, db_type, limit=6):
-        # 스케줄러가 아직 안 떠 있으면 여기서라도 기동 (지연 기동 폴백)
-        self._ensure_scheduler(db_type)
+    def get_status(self, db_type):
+        """
+        캐시 상태 요약. dashboard_widget을 없앴으므로 홈 대시보드 카드용이
+        아니라, 설정 화면(ui/script.js)이 직접 호출해서 쓰는 순수 데이터다.
+
+        NOTE: 실제로 이 메서드를 어떤 라우트가 호출하게 할지는 코어 쪽 구현에
+        달려 있다. 문서에 있는 기존 엔드포인트
+        `/api/media/dashboard/widgets/<plugin_id>/data`가 dashboard_widget이
+        없어도 이 메서드(또는 get_dashboard_data)를 그대로 불러주는지 확인
+        필요. 안 불러준다면 별도 라우트를 코어에 추가해야 한다.
+        """
+        # on_enable 훅이 코어에 없을 경우를 대비한 지연 등록 폴백
+        try:
+            from services.scheduler_service import scheduler
+            if not scheduler.get_job(self._job_id(db_type)):
+                self._register_job(db_type)
+        except Exception:
+            self._register_fallback_thread(db_type)
+        self._ensure_watchdog(db_type)
 
         cache_dir, max_age_hours, max_size_gb, interval_min = self._get_settings(db_type)
         entries, total_size = self._scan(cache_dir)
@@ -283,28 +425,101 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         max_age_seconds = max_age_hours * 3600
         stale_count = sum(1 for _f, _s, m in entries if (now - m) >= max_age_seconds)
         size_gb = round(total_size / (1024 ** 3), 3)
-        will_full_clear = size_gb >= max_size_gb
 
         state = self._read_state(cache_dir) or {}
         last_run = state.get("last_run", "아직 실행 안 됨")
         last_result = state.get("last_result") or {}
-        last_summary = (
-            f"{last_result.get('mode', '-')} / 삭제 {last_result.get('deleted_count', 0)}건"
-            if last_result else "-"
-        )
 
-        # 대시보드 위젯 아이템은 "도서 카드" 스키마(title/author/publisher/cover_image)로
-        # 고정 렌더링되므로, label/value 대신 title 한 줄에 텍스트를 담아 전달한다.
-        # book_id/file_format/series_name/link를 넣지 않아야 클릭 시 엉뚱한 뷰어/상세화면으로
-        # 튀지 않는다 (Widget Item Click Contract 참고).
-        items = [
-            {"title": f"📁 캐시 경로: {cache_dir}", "author": " ", "publisher": " "},
-            {"title": f"💾 총 용량: {size_gb} GB (기준 {max_size_gb}GB)", "author": " ", "publisher": " "},
-            {"title": f"🗂 총 파일 수: {len(entries)}개", "author": " ", "publisher": " "},
-            {"title": f"⏳ {int(max_age_hours)}시간 이상 경과 파일: {stale_count}개", "author": " ", "publisher": " "},
-            {"title": f"🔄 자동 점검 주기: {int(interval_min)}분", "author": " ", "publisher": " "},
-            {"title": f"🕒 마지막 실행: {last_run}", "author": " ", "publisher": " "},
-            {"title": f"✅ 마지막 결과: {last_summary}", "author": " ", "publisher": " "},
-        ]
+        # 코어 APScheduler에 등록된 잡이면 다음 실행 예정 시각을 그대로 읽어온다.
+        next_run = None
+        scheduler_backend = "fallback_thread"
+        try:
+            from services.scheduler_service import scheduler
+            job = scheduler.get_job(self._job_id(db_type))
+            if job and job.next_run_time:
+                next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S")
+                scheduler_backend = "apscheduler"
+        except Exception:
+            pass
 
-        return {"success": True, "items": items[:limit] if limit else items}
+        cfg = self.get_plugin_config(db_type, default={})
+        cron_expr = (cfg.get("CRON_SCHEDULE") or "").strip()
+
+        return {
+            "success": True,
+            "cache_dir": cache_dir,
+            "size_gb": size_gb,
+            "max_size_gb": max_size_gb,
+            "file_count": len(entries),
+            "stale_count": stale_count,
+            "max_age_hours": max_age_hours,
+            "interval_min": int(interval_min),
+            "cron_expr": cron_expr or None,
+            "will_full_clear": size_gb >= max_size_gb,
+            "last_run": last_run,
+            "last_mode": last_result.get("mode", "-"),
+            "last_deleted_count": last_result.get("deleted_count", 0),
+            "next_run": next_run or "확인 불가 (폴백 스레드 모드)",
+            "scheduler_backend": scheduler_backend,
+        }
+
+    # 기존에 이미 동작이 확인된 엔드포인트
+    # (`/api/media/dashboard/widgets/<plugin_id>/data`)를 그대로 재사용해서
+    # 상태값을 실어 보낸다. dashboard_widget이 None이라 홈 화면 카드에는
+    # 안 뜨지만, 데이터 API 자체는 살아있다는 가정하에 설정 화면의 JS가
+    # 이 응답을 그대로 파싱해서 쓴다. items는 도서 카드 렌더러용 호환 필드라
+    # 항상 빈 배열로 둔다.
+    def get_dashboard_data(self, db_type, limit=6):
+        status = self.get_status(db_type)
+        status["items"] = []
+        return status
+
+    # ------------------------------------------------------------------
+    # 커스텀 설정 화면 (target=settings) 서빙
+    # ------------------------------------------------------------------
+    def get_ui(self, target="view"):
+        """
+        `/api/media/plugins/<plugin_id>/ui?target=settings` 서빙 규격에 맞춰
+        html/css/js 번들을 반환한다.
+
+        NOTE: 메서드 이름(get_ui)과 반환 형태는 API 문서의 응답 예시
+        ({"success": true, "ui": {"html":..., "css":..., "js":...}})에서
+        역으로 추정한 것이라, 코어가 실제로 어떤 메서드명을 호출하는지는
+        확인이 필요하다. 이름이 다르면 그 이름으로 맞춰야 한다.
+        """
+        ui_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
+        filename = "settings.html" if target == "settings" else "index.html"
+
+        def _read(name):
+            path = os.path.join(ui_dir, name)
+            if not os.path.isfile(path):
+                return ""
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+
+        return {
+            "success": True,
+            "ui": {
+                "html": _read(filename),
+                "css": _read("style.css"),
+                "js": _read("script.js"),
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # 설정 화면의 "지금 즉시 삭제" 버튼이 호출할 액션 처리
+    # ------------------------------------------------------------------
+    def handle_action(self, db_type, action, payload=None):
+        """
+        NOTE: 이 메서드를 호출해줄 백엔드 라우트가 API 문서에 없다.
+        (`toggle` / `save-config` / `apply-metadata`만 존재)
+        코어에 플러그인 커스텀 액션을 받아주는 공용 라우트가 있다면 그쪽에서
+        이 메서드를 호출하도록 연결하고, 없다면 새로 추가해야 한다.
+        예상 시그니처: handle_action(db_type: str, action: str, payload: dict)
+        """
+        if action == "clean_now":
+            result = self.clean_cache(db_type)
+            self._log(db_type, result)
+            return {"success": True, "result": result}
+
+        return {"success": False, "error": f"알 수 없는 action: {action}"}
