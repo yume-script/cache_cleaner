@@ -138,6 +138,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
     def on_enable(self, db_type):
         self._register_job(db_type)
         self._ensure_watchdog(db_type)
+        self._ensure_run_now_poller(db_type)
 
     def on_disable(self, db_type):
         try:
@@ -255,6 +256,49 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
                 interval_min = 60
             time.sleep(max(1, interval_min) * 60)
 
+    RUN_NOW_POLL_SECONDS = 5
+
+    def _ensure_run_now_poller(self, db_type):
+        """
+        설정 화면의 "지금 즉시 삭제 실행" 버튼용. 백엔드에 별도 액션
+        엔드포인트가 없으므로, 버튼 클릭 시 save-config로 config에
+        RUN_NOW_TOKEN(타임스탬프)을 실어 보내고, 이 폴러가 5초마다 그
+        토큰이 바뀌었는지 확인해서 바뀌었으면 즉시 clean_cache를 실행한다.
+        완전한 즉시 실행은 아니고 최대 RUN_NOW_POLL_SECONDS초 지연이 있다.
+        """
+        key = f"runnow_{db_type}"
+        with CacheCleanerMetadataProvider._scheduler_lock:
+            existing = CacheCleanerMetadataProvider._watchdog_threads.get(key)
+            if existing and existing.is_alive():
+                return
+            t = threading.Thread(
+                target=self._run_now_poller_loop,
+                args=(db_type,),
+                daemon=True,
+                name=f"cache-cleaner-runnow-{db_type}",
+            )
+            CacheCleanerMetadataProvider._watchdog_threads[key] = t
+            t.start()
+
+    def _run_now_poller_loop(self, db_type):
+        while True:
+            try:
+                cfg = self.get_plugin_config(db_type, default={})
+                token = str(cfg.get("RUN_NOW_TOKEN") or "").strip()
+                if token:
+                    cache_dir, *_ = self._get_settings(db_type)
+                    state = self._read_state(cache_dir) or {}
+                    if state.get("last_run_now_token") != token:
+                        result = self.clean_cache(db_type)
+                        self._log(db_type, result, extra={"last_run_now_token": token})
+            except Exception as e:
+                try:
+                    self._log(db_type, {"mode": "error", "error": str(e),
+                                         "deleted_count": 0, "total_size_before": 0})
+                except Exception:
+                    pass
+            time.sleep(self.RUN_NOW_POLL_SECONDS)
+
     # ------------------------------------------------------------------
     # 설정 헬퍼
     # ------------------------------------------------------------------
@@ -283,7 +327,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         parent = os.path.dirname(os.path.abspath(cache_dir.rstrip("/\\"))) or "."
         return os.path.join(parent, "cache_cleaner.log")
 
-    def _log(self, db_type, result):
+    def _log(self, db_type, result, extra=None):
         cfg = self.get_plugin_config(db_type, default={})
         cache_dir = cfg.get("CACHE_DIR") or "cache"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -301,9 +345,17 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         except OSError:
             pass
 
-        # 대시보드 조회용 최신 상태 저장
+        # 대시보드 조회용 최신 상태 저장 (기존 state에 extra를 병합해서 유지)
         try:
+            prev_state = self._read_state(cache_dir) or {}
             state = {"last_run": ts, "last_result": result}
+            if extra:
+                state.update(extra)
+            else:
+                # extra가 없는 일반 실행이면 이전에 기록해둔 run_now 토큰 등은 보존
+                for k in ("last_run_now_token",):
+                    if k in prev_state:
+                        state[k] = prev_state[k]
             with open(self._state_path(cache_dir), "w", encoding="utf-8") as f:
                 json.dump(state, f, ensure_ascii=False)
         except OSError:
@@ -417,6 +469,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         except Exception:
             self._register_fallback_thread(db_type)
         self._ensure_watchdog(db_type)
+        self._ensure_run_now_poller(db_type)
 
         cache_dir, max_age_hours, max_size_gb, interval_min = self._get_settings(db_type)
         entries, total_size = self._scan(cache_dir)
@@ -461,6 +514,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
             "last_deleted_count": last_result.get("deleted_count", 0),
             "next_run": next_run or "확인 불가 (폴백 스레드 모드)",
             "scheduler_backend": scheduler_backend,
+            "last_run_now_token": (state or {}).get("last_run_now_token"),
         }
 
     # 기존에 이미 동작이 확인된 엔드포인트
