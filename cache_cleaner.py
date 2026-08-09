@@ -104,7 +104,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
     update_manifest = {
         "enabled": True,
         "provider": "github-raw",
-        "raw_base_url": "https://raw.githubusercontent.com/<org>/<repo>/<branch>/plugins/metadata/cache_cleaner",
+        "raw_base_url": "https://raw.githubusercontent.com/yume-script/cache_cleaner/refs/heads/main/",
         "files": ["cache_cleaner.py", "__init__.py", "VERSION", "settings.html", "settings.css", "settings.js"],
         "version_file": "VERSION",
         "version_key": "plugin version",
