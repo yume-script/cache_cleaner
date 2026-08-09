@@ -28,7 +28,7 @@ APScheduler가 수행하고, 워치독은 등록 상태만 감시).
 예전처럼 자체 스레드 루프로 폴백한다.
 
 실행 여부는 아래에서 확인 가능하다.
-  1) 설정 화면(ui/settings.html): 마지막 실행 시각 / 결과
+  1) 설정 화면(settings.html): 마지막 실행 시각 / 결과
   2) 로그 파일: <CACHE_DIR>/../cache_cleaner.log
      (예: [2026-08-08 03:00:01] mode=age_based deleted=12 total_before_gb=3.21)
 
@@ -105,7 +105,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         "enabled": True,
         "provider": "github-raw",
         "raw_base_url": "https://raw.githubusercontent.com/<org>/<repo>/<branch>/plugins/metadata/cache_cleaner",
-        "files": ["cache_cleaner.py", "__init__.py", "VERSION"],
+        "files": ["cache_cleaner.py", "__init__.py", "VERSION", "settings.html", "settings.css", "settings.js"],
         "version_file": "VERSION",
         "version_key": "plugin version",
         "show_sample_update_button": True,
@@ -401,7 +401,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
     def get_status(self, db_type):
         """
         캐시 상태 요약. dashboard_widget을 없앴으므로 홈 대시보드 카드용이
-        아니라, 설정 화면(ui/script.js)이 직접 호출해서 쓰는 순수 데이터다.
+        아니라, 설정 화면(settings.js)이 직접 호출해서 쓰는 순수 데이터다.
 
         NOTE: 실제로 이 메서드를 어떤 라우트가 호출하게 할지는 코어 쪽 구현에
         달려 있다. 문서에 있는 기존 엔드포인트
@@ -475,36 +475,11 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         return status
 
     # ------------------------------------------------------------------
-    # 커스텀 설정 화면 (target=settings) 서빙
+    # 커스텀 설정 화면
+    # settings.html / settings.css / settings.js를 플러그인 루트에 두면
+    # 코어가 파일명 규칙으로 자동 서빙한다 (config_schema 자동 폼 대신
+    # 사용됨). 별도 서빙 메서드를 구현할 필요 없음 — 파일만 있으면 된다.
     # ------------------------------------------------------------------
-    def get_ui(self, target="view"):
-        """
-        `/api/media/plugins/<plugin_id>/ui?target=settings` 서빙 규격에 맞춰
-        html/css/js 번들을 반환한다.
-
-        NOTE: 메서드 이름(get_ui)과 반환 형태는 API 문서의 응답 예시
-        ({"success": true, "ui": {"html":..., "css":..., "js":...}})에서
-        역으로 추정한 것이라, 코어가 실제로 어떤 메서드명을 호출하는지는
-        확인이 필요하다. 이름이 다르면 그 이름으로 맞춰야 한다.
-        """
-        ui_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
-        filename = "settings.html" if target == "settings" else "index.html"
-
-        def _read(name):
-            path = os.path.join(ui_dir, name)
-            if not os.path.isfile(path):
-                return ""
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read()
-
-        return {
-            "success": True,
-            "ui": {
-                "html": _read(filename),
-                "css": _read("style.css"),
-                "js": _read("script.js"),
-            },
-        }
 
     # ------------------------------------------------------------------
     # 설정 화면의 "지금 즉시 삭제" 버튼이 호출할 액션 처리
