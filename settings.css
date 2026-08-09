@@ -1,8 +1,65 @@
-.cc-wrap {
+.cc-settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: #e5e9f0;
+}
+
+.cc-settings-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.cc-settings-desc {
+  font-size: 13px;
+  color: #9aa4b8;
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.cc-settings-section {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.cc-settings-section > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 14px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e9f0;
+  user-select: none;
+}
+
+.cc-settings-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.cc-settings-section > summary::before {
+  content: "▶";
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 11px;
+  color: #8b5cf6;
+  transition: transform 0.15s ease;
+}
+
+.cc-settings-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.cc-settings-section > summary:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cc-settings-body {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  color: #e5e9f0;
+  padding: 4px 18px 18px 18px;
 }
 
 .cc-card {
@@ -60,12 +117,11 @@
   font-size: 13px;
 }
 
-.cc-field {
-  display: block;
+.cc-settings-field {
   margin-bottom: 14px;
 }
 
-.cc-field span {
+.cc-settings-field label {
   display: block;
   margin-bottom: 6px;
   font-size: 13px;
@@ -73,12 +129,12 @@
   color: #e5e9f0;
 }
 
-.cc-field em {
+.cc-settings-field em {
   color: #ec4899;
   font-style: normal;
 }
 
-.cc-field input {
+.cc-input-container input {
   width: 100%;
   box-sizing: border-box;
   padding: 10px 12px;
@@ -89,9 +145,16 @@
   font-size: 14px;
 }
 
-.cc-field input:focus {
+.cc-input-container input:focus {
   outline: none;
   border-color: #8b5cf6;
+}
+
+.cc-input-container .hint {
+  margin: 6px 0 0 0;
+  font-size: 12px;
+  color: #7d8699;
+  line-height: 1.5;
 }
 
 .cc-btn {

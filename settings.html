@@ -1,49 +1,83 @@
-<div class="cc-wrap">
+<div class="cc-settings-panel">
+  <div class="cc-settings-title">Cache Cleaner 설정</div>
+  <div class="cc-settings-desc">
+    캐시 폴더 자동/수동 정리를 위한 상태 확인, 수동 실행, 삭제 조건 설정입니다.
+  </div>
 
-  <section class="cc-card">
-    <h3 class="cc-card-title">📊 캐시 상태</h3>
-    <div id="cc-status" class="cc-status-grid">
-      <div class="cc-status-loading">불러오는 중...</div>
+  <details class="cc-settings-section">
+    <summary>설정 펼치기 (클릭)</summary>
+    <div class="cc-settings-body">
+
+      <!-- 캐시 상태 -->
+      <section class="cc-card">
+        <h3 class="cc-card-title">📊 캐시 상태</h3>
+        <div id="cc-status" class="cc-status-grid">
+          <div class="cc-status-loading">불러오는 중...</div>
+        </div>
+        <button id="cc-refresh-btn" class="cc-btn cc-btn-ghost">새로고침</button>
+      </section>
+
+      <!-- 수동 정리 -->
+      <section class="cc-card">
+        <h3 class="cc-card-title">🧹 수동 정리</h3>
+        <p class="cc-hint">
+          자동 점검 주기를 기다리지 않고 지금 바로 조건(경과 파일 삭제 /
+          용량 초과 시 전체 삭제)에 따라 캐시를 정리합니다.
+        </p>
+        <button id="cc-clean-btn" class="cc-btn cc-btn-danger">
+          🗑 지금 즉시 삭제 실행
+        </button>
+        <div id="cc-clean-result" class="cc-clean-result"></div>
+      </section>
+
+      <!-- 삭제 조건 -->
+      <section class="cc-card">
+        <h3 class="cc-card-title">⚙️ 삭제 조건</h3>
+
+        <div class="cc-settings-field">
+          <label for="cc-cache-dir">캐시 폴더 경로 <em>*</em></label>
+          <div class="cc-input-container">
+            <input id="cc-cache-dir" type="text" name="CACHE_DIR" placeholder="cache" />
+            <p class="hint">정리 대상이 되는 캐시 폴더의 경로입니다.</p>
+          </div>
+        </div>
+
+        <div class="cc-settings-field">
+          <label for="cc-max-age">파일 삭제 기준 (시간)</label>
+          <div class="cc-input-container">
+            <input id="cc-max-age" type="text" name="MAX_AGE_HOURS" placeholder="24" />
+            <p class="hint">생성(수정)된 지 이 시간 이상 지난 파일을 개별 삭제합니다.</p>
+          </div>
+        </div>
+
+        <div class="cc-settings-field">
+          <label for="cc-max-size">전체 삭제 기준 용량 (GB)</label>
+          <div class="cc-input-container">
+            <input id="cc-max-size" type="text" name="MAX_SIZE_GB" placeholder="10" />
+            <p class="hint">캐시 폴더 총 용량이 이 값 이상이면 파일 나이와 무관하게 전체 삭제합니다.</p>
+          </div>
+        </div>
+
+        <div class="cc-settings-field">
+          <label for="cc-interval">자동 점검 주기 (분)</label>
+          <div class="cc-input-container">
+            <input id="cc-interval" type="text" name="CHECK_INTERVAL_MINUTES" placeholder="60" />
+            <p class="hint">아래 Cron 표현식이 비어있을 때만 사용되는 반복 주기입니다.</p>
+          </div>
+        </div>
+
+        <div class="cc-settings-field">
+          <label for="cc-cron">Cron 표현식 (선택)</label>
+          <div class="cc-input-container">
+            <input id="cc-cron" type="text" name="CRON_SCHEDULE" placeholder="예: 0 3 * * * (매일 새벽 3시)" />
+            <p class="hint">값을 입력하면 위 주기(분) 설정 대신 이 crontab 표현식으로 동작합니다.</p>
+          </div>
+        </div>
+
+        <button id="cc-save-btn" class="cc-btn cc-btn-primary">💾 설정 저장</button>
+        <div id="cc-save-result" class="cc-save-result"></div>
+      </section>
+
     </div>
-    <button id="cc-refresh-btn" class="cc-btn cc-btn-ghost">새로고침</button>
-  </section>
-
-  <section class="cc-card">
-    <h3 class="cc-card-title">🧹 수동 정리</h3>
-    <p class="cc-hint">
-      자동 점검 주기를 기다리지 않고 지금 바로 조건(경과 파일 삭제 /
-      용량 초과 시 전체 삭제)에 따라 캐시를 정리합니다.
-    </p>
-    <button id="cc-clean-btn" class="cc-btn cc-btn-danger">
-      🗑 지금 즉시 삭제 실행
-    </button>
-    <div id="cc-clean-result" class="cc-clean-result"></div>
-  </section>
-
-  <section class="cc-card">
-    <h3 class="cc-card-title">⚙️ 삭제 조건</h3>
-    <label class="cc-field">
-      <span>캐시 폴더 경로 <em>*</em></span>
-      <input type="text" name="CACHE_DIR" placeholder="cache" />
-    </label>
-    <label class="cc-field">
-      <span>파일 삭제 기준 (시간)</span>
-      <input type="text" name="MAX_AGE_HOURS" placeholder="24" />
-    </label>
-    <label class="cc-field">
-      <span>전체 삭제 기준 용량 (GB)</span>
-      <input type="text" name="MAX_SIZE_GB" placeholder="10" />
-    </label>
-    <label class="cc-field">
-      <span>자동 점검 주기 (분) — Cron 표현식이 비어있을 때만 사용</span>
-      <input type="text" name="CHECK_INTERVAL_MINUTES" placeholder="60" />
-    </label>
-    <label class="cc-field">
-      <span>Cron 표현식 (선택) — 예: 0 3 * * * (매일 새벽 3시)</span>
-      <input type="text" name="CRON_SCHEDULE" placeholder="비우면 위 주기(분)로 동작" />
-    </label>
-    <button id="cc-save-btn" class="cc-btn cc-btn-primary">💾 설정 저장</button>
-    <div id="cc-save-result" class="cc-save-result"></div>
-  </section>
-
+  </details>
 </div>

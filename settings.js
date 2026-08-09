@@ -98,7 +98,7 @@
   }
 
   function currentFormConfig() {
-    var form = document.querySelectorAll(".cc-field input");
+    var form = document.querySelectorAll(".cc-settings-field input");
     var config = {};
     form.forEach(function (input) {
       config[input.name] = input.value;
