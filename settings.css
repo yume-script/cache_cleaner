@@ -212,3 +212,129 @@
 .cc-result-error {
   color: #f87171;
 }
+
+/* --- 로그 폴더 지원을 위한 추가 스타일 (깔끔한 정리 버전) --- */
+
+.cc-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+
+@media (max-width: 480px) {
+  .cc-field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cc-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 16px 0;
+}
+
+.cc-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cc-toggle-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e9f0;
+}
+
+.cc-switch {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.cc-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.cc-switch .cc-slider {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 24px;
+  transition: background 0.2s ease;
+}
+
+.cc-switch .cc-slider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+}
+
+.cc-switch input:checked + .cc-slider {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+}
+
+.cc-switch input:checked + .cc-slider::before {
+  transform: translateX(18px);
+}
+
+.cc-switch input:focus-visible + .cc-slider {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 2px;
+}
+
+.cc-collapse {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 0.25s ease, opacity 0.2s ease, margin-top 0.25s ease;
+}
+
+.cc-collapse.cc-open {
+  max-height: 600px;
+  opacity: 1;
+  margin-top: 16px;
+}
+
+.cc-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.cc-tab-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #9aa4b8;
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.cc-tab-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cc-tab-btn.active {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  color: #fff;
+  border-color: transparent;
+}
+
+.cc-tab-panel[hidden] {
+  display: none;
+}

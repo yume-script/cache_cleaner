@@ -8,13 +8,53 @@
     "general";
 
   var statusEl = document.getElementById("cc-status");
-  var logStatusSectionEl = document.getElementById("cc-log-status-section");
   var logStatusEl = document.getElementById("cc-log-status");
+  var logTabBtn = document.getElementById("cc-log-tab-btn");
+  var statusTabsEl = document.getElementById("cc-status-tabs");
   var refreshBtn = document.getElementById("cc-refresh-btn");
   var cleanBtn = document.getElementById("cc-clean-btn");
   var cleanResultEl = document.getElementById("cc-clean-result");
   var saveBtn = document.getElementById("cc-save-btn");
   var saveResultEl = document.getElementById("cc-save-result");
+  var enableLogCheckbox = document.getElementById("cc-enable-log");
+  var logFieldsEl = document.getElementById("cc-log-fields");
+
+  // ------------------------------------------------------------------
+  // 로그 필드 접고 펼치기 (토글 스위치와 연동)
+  // ------------------------------------------------------------------
+  function syncLogFieldsVisibility() {
+    if (!enableLogCheckbox || !logFieldsEl) return;
+    if (enableLogCheckbox.checked) {
+      logFieldsEl.classList.add("cc-open");
+    } else {
+      logFieldsEl.classList.remove("cc-open");
+    }
+  }
+
+  if (enableLogCheckbox) {
+    enableLogCheckbox.addEventListener("change", syncLogFieldsVisibility);
+    syncLogFieldsVisibility();
+  }
+
+  // ------------------------------------------------------------------
+  // 상태 탭 (캐시 / 로그)
+  // ------------------------------------------------------------------
+  function switchTab(tab) {
+    if (!statusTabsEl) return;
+    statusTabsEl.querySelectorAll(".cc-tab-btn").forEach(function (btn) {
+      btn.classList.toggle("active", btn.dataset.tab === tab);
+    });
+    if (statusEl) statusEl.hidden = tab !== "cache";
+    if (logStatusEl) logStatusEl.hidden = tab !== "log";
+  }
+
+  if (statusTabsEl) {
+    statusTabsEl.addEventListener("click", function (e) {
+      var btn = e.target.closest(".cc-tab-btn");
+      if (!btn || btn.hidden) return;
+      switchTab(btn.dataset.tab);
+    });
+  }
 
   function statusItem(label, value, warn) {
     return (
@@ -73,13 +113,18 @@
   }
 
   function renderLogStatus(data) {
-    if (!logStatusSectionEl || !logStatusEl) return;
+    if (!logStatusEl || !logTabBtn) return;
 
     if (!data.log_enabled) {
-      logStatusSectionEl.style.display = "none";
+      logTabBtn.hidden = true;
+      if (!statusTabsEl.querySelector(".cc-tab-btn.active")) {
+        switchTab("cache");
+      } else if (statusTabsEl.querySelector('.cc-tab-btn[data-tab="log"]').classList.contains("active")) {
+        switchTab("cache");
+      }
       return;
     }
-    logStatusSectionEl.style.display = "";
+    logTabBtn.hidden = false;
 
     var html = "";
     html += statusItem("로그 경로", data.log_dir);
@@ -140,14 +185,17 @@
     var form = document.querySelectorAll(".cc-settings-field input");
     var config = {};
     form.forEach(function (input) {
-      // 체크박스(ENABLE_LOG_CLEANUP 등)는 value가 아니라 checked 상태를
-      // boolean으로 실어 보낸다. 그 외 text 입력은 기존과 동일하게 처리.
       if (input.type === "checkbox") {
         config[input.name] = input.checked;
       } else {
         config[input.name] = input.value;
       }
     });
+    // toggle switch(cc-switch) 안의 체크박스는 .cc-settings-field 밖에 있어서
+    // 위 querySelectorAll에 안 잡히므로 별도로 챙겨준다.
+    if (enableLogCheckbox) {
+      config[enableLogCheckbox.name] = enableLogCheckbox.checked;
+    }
     return config;
   }
 

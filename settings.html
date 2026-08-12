@@ -4,25 +4,27 @@
     캐시 폴더(및 선택 시 로그 폴더) 자동/수동 정리를 위한 상태 확인, 수동 실행, 삭제 조건 설정입니다.
   </div>
 
-  <details class="cc-settings-section">
+  <details class="cc-settings-section" open>
     <summary>설정 펼치기 (클릭)</summary>
     <div class="cc-settings-body">
 
-      <!-- 캐시 상태 -->
+      <!-- 상태 (캐시 / 로그 탭) -->
       <section class="cc-card">
-        <h3 class="cc-card-title">📊 캐시 상태</h3>
-        <div id="cc-status" class="cc-status-grid">
-          <div class="cc-status-loading">불러오는 중...</div>
-        </div>
-        <button id="cc-refresh-btn" class="cc-btn cc-btn-ghost">새로고침</button>
-      </section>
+        <h3 class="cc-card-title">📊 상태</h3>
 
-      <!-- 로그 상태 (로그 정리 사용 시에만 표시) -->
-      <section class="cc-card" id="cc-log-status-section">
-        <h3 class="cc-card-title">📄 로그 상태</h3>
-        <div id="cc-log-status" class="cc-status-grid">
+        <div class="cc-tabs" id="cc-status-tabs">
+          <button type="button" class="cc-tab-btn active" data-tab="cache">캐시</button>
+          <button type="button" class="cc-tab-btn" data-tab="log" id="cc-log-tab-btn" hidden>로그</button>
+        </div>
+
+        <div id="cc-status" class="cc-status-grid cc-tab-panel" data-panel="cache">
           <div class="cc-status-loading">불러오는 중...</div>
         </div>
+        <div id="cc-log-status" class="cc-status-grid cc-tab-panel" data-panel="log" hidden>
+          <div class="cc-status-loading">불러오는 중...</div>
+        </div>
+
+        <button id="cc-refresh-btn" class="cc-btn cc-btn-ghost">새로고침</button>
       </section>
 
       <!-- 수동 정리 -->
@@ -38,9 +40,10 @@
         <div id="cc-clean-result" class="cc-clean-result"></div>
       </section>
 
-      <!-- 삭제 조건 : 캐시 -->
+      <!-- 삭제 조건 -->
       <section class="cc-card">
-        <h3 class="cc-card-title">⚙️ 캐시 삭제 조건</h3>
+        <h3 class="cc-card-title">⚙️ 삭제 조건</h3>
+
         <div class="cc-settings-field">
           <label for="cc-cache-dir">캐시 폴더 경로 <em>*</em></label>
           <div class="cc-input-container">
@@ -48,51 +51,58 @@
             <p class="hint">정리 대상이 되는 캐시 폴더의 경로입니다.</p>
           </div>
         </div>
-        <div class="cc-settings-field">
-          <label for="cc-max-age">파일 삭제 기준 (시간)</label>
-          <div class="cc-input-container">
-            <input id="cc-max-age" type="text" name="MAX_AGE_HOURS" placeholder="24" />
-            <p class="hint">생성(수정)된 지 이 시간 이상 지난 파일을 개별 삭제합니다.</p>
-          </div>
-        </div>
-        <div class="cc-settings-field">
-          <label for="cc-max-size">전체 삭제 기준 용량 (GB)</label>
-          <div class="cc-input-container">
-            <input id="cc-max-size" type="text" name="MAX_SIZE_GB" placeholder="10" />
-            <p class="hint">캐시 폴더 총 용량이 이 값 이상이면 파일 나이와 무관하게 전체 삭제합니다.</p>
-          </div>
-        </div>
-      </section>
 
-      <!-- 삭제 조건 : 로그 -->
-      <section class="cc-card">
-        <h3 class="cc-card-title">⚙️ 로그 삭제 조건</h3>
-        <div class="cc-settings-field cc-settings-field-checkbox">
-          <label for="cc-enable-log">
+        <div class="cc-field-grid">
+          <div class="cc-settings-field">
+            <label for="cc-max-age">파일 삭제 기준 (시간)</label>
+            <div class="cc-input-container">
+              <input id="cc-max-age" type="text" name="MAX_AGE_HOURS" placeholder="24" />
+              <p class="hint">이 시간 이상 지난 파일을 개별 삭제합니다.</p>
+            </div>
+          </div>
+          <div class="cc-settings-field">
+            <label for="cc-max-size">전체 삭제 기준 용량 (GB)</label>
+            <div class="cc-input-container">
+              <input id="cc-max-size" type="text" name="MAX_SIZE_GB" placeholder="10" />
+              <p class="hint">총 용량이 이 값 이상이면 전체 삭제합니다.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="cc-divider"></div>
+
+        <div class="cc-toggle-row">
+          <span class="cc-toggle-label">로그 폴더도 함께 정리</span>
+          <label class="cc-switch">
             <input id="cc-enable-log" type="checkbox" name="ENABLE_LOG_CLEANUP" />
-            로그 폴더도 함께 정리
+            <span class="cc-slider"></span>
           </label>
-          <p class="hint">체크하면 아래 로그 폴더 경로/조건에 따라 캐시와 같은 잡(스케줄)에서 로그도 정리합니다.</p>
         </div>
-        <div class="cc-settings-field">
-          <label for="cc-log-dir">로그 폴더 경로</label>
-          <div class="cc-input-container">
-            <input id="cc-log-dir" type="text" name="LOG_DIR" placeholder="logs" />
-            <p class="hint">정리 대상이 되는 로그 폴더의 경로입니다. (로그 정리 사용 시 필수)</p>
+
+        <div id="cc-log-fields" class="cc-collapse">
+          <div class="cc-settings-field">
+            <label for="cc-log-dir">로그 폴더 경로 <em>*</em></label>
+            <div class="cc-input-container">
+              <input id="cc-log-dir" type="text" name="LOG_DIR" placeholder="logs" />
+              <p class="hint">정리 대상이 되는 로그 폴더의 경로입니다.</p>
+            </div>
           </div>
-        </div>
-        <div class="cc-settings-field">
-          <label for="cc-log-max-age">파일 삭제 기준 (시간)</label>
-          <div class="cc-input-container">
-            <input id="cc-log-max-age" type="text" name="LOG_MAX_AGE_HOURS" placeholder="24" />
-            <p class="hint">생성(수정)된 지 이 시간 이상 지난 로그 파일을 개별 삭제합니다.</p>
-          </div>
-        </div>
-        <div class="cc-settings-field">
-          <label for="cc-log-max-size">전체 삭제 기준 용량 (GB)</label>
-          <div class="cc-input-container">
-            <input id="cc-log-max-size" type="text" name="LOG_MAX_SIZE_GB" placeholder="1" />
-            <p class="hint">로그 폴더 총 용량이 이 값 이상이면 파일 나이와 무관하게 전체 삭제합니다.</p>
+
+          <div class="cc-field-grid">
+            <div class="cc-settings-field">
+              <label for="cc-log-max-age">파일 삭제 기준 (시간)</label>
+              <div class="cc-input-container">
+                <input id="cc-log-max-age" type="text" name="LOG_MAX_AGE_HOURS" placeholder="24" />
+                <p class="hint">이 시간 이상 지난 로그를 개별 삭제합니다.</p>
+              </div>
+            </div>
+            <div class="cc-settings-field">
+              <label for="cc-log-max-size">전체 삭제 기준 용량 (GB)</label>
+              <div class="cc-input-container">
+                <input id="cc-log-max-size" type="text" name="LOG_MAX_SIZE_GB" placeholder="1" />
+                <p class="hint">총 용량이 이 값 이상이면 전체 삭제합니다.</p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -100,18 +110,22 @@
       <!-- 실행 주기 -->
       <section class="cc-card">
         <h3 class="cc-card-title">⏱ 실행 주기</h3>
-        <div class="cc-settings-field">
-          <label for="cc-interval">자동 점검 주기 (분)</label>
-          <div class="cc-input-container">
-            <input id="cc-interval" type="text" name="CHECK_INTERVAL_MINUTES" placeholder="60" />
-            <p class="hint">아래 Cron 표현식이 비어있을 때만 사용되는 반복 주기입니다.</p>
+        <p class="cc-hint">캐시와 로그는 같은 스케줄로 함께 점검·정리됩니다.</p>
+
+        <div class="cc-field-grid">
+          <div class="cc-settings-field">
+            <label for="cc-interval">자동 점검 주기 (분)</label>
+            <div class="cc-input-container">
+              <input id="cc-interval" type="text" name="CHECK_INTERVAL_MINUTES" placeholder="60" />
+              <p class="hint">Cron이 비어있을 때만 사용됩니다.</p>
+            </div>
           </div>
-        </div>
-        <div class="cc-settings-field">
-          <label for="cc-cron">Cron 표현식 (선택)</label>
-          <div class="cc-input-container">
-            <input id="cc-cron" type="text" name="CRON_SCHEDULE" placeholder="예: 0 3 * * * (매일 새벽 3시)" />
-            <p class="hint">값을 입력하면 위 주기(분) 설정 대신 이 crontab 표현식으로 동작합니다. (캐시/로그 공통 스케줄)</p>
+          <div class="cc-settings-field">
+            <label for="cc-cron">Cron 표현식 (선택)</label>
+            <div class="cc-input-container">
+              <input id="cc-cron" type="text" name="CRON_SCHEDULE" placeholder="0 3 * * *" />
+              <p class="hint">입력 시 위 주기(분) 대신 이 값으로 동작합니다.</p>
+            </div>
           </div>
         </div>
 
