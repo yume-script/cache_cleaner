@@ -1,7 +1,7 @@
 <div class="cc-settings-panel">
   <div class="cc-settings-title">Cache Cleaner 설정</div>
   <div class="cc-settings-desc">
-    캐시 폴더 자동/수동 정리를 위한 상태 확인, 수동 실행, 삭제 조건 설정입니다.
+    캐시 폴더(및 선택 시 로그 폴더) 자동/수동 정리를 위한 상태 확인, 수동 실행, 삭제 조건 설정입니다.
   </div>
 
   <details class="cc-settings-section">
@@ -17,12 +17,20 @@
         <button id="cc-refresh-btn" class="cc-btn cc-btn-ghost">새로고침</button>
       </section>
 
+      <!-- 로그 상태 (로그 정리 사용 시에만 표시) -->
+      <section class="cc-card" id="cc-log-status-section">
+        <h3 class="cc-card-title">📄 로그 상태</h3>
+        <div id="cc-log-status" class="cc-status-grid">
+          <div class="cc-status-loading">불러오는 중...</div>
+        </div>
+      </section>
+
       <!-- 수동 정리 -->
       <section class="cc-card">
         <h3 class="cc-card-title">🧹 수동 정리</h3>
         <p class="cc-hint">
           자동 점검 주기를 기다리지 않고 지금 바로 조건(경과 파일 삭제 /
-          용량 초과 시 전체 삭제)에 따라 캐시를 정리합니다.
+          용량 초과 시 전체 삭제)에 따라 캐시(및 사용 설정 시 로그)를 정리합니다.
         </p>
         <button id="cc-clean-btn" class="cc-btn cc-btn-danger">
           🗑 지금 즉시 삭제 실행
@@ -30,10 +38,9 @@
         <div id="cc-clean-result" class="cc-clean-result"></div>
       </section>
 
-      <!-- 삭제 조건 -->
+      <!-- 삭제 조건 : 캐시 -->
       <section class="cc-card">
-        <h3 class="cc-card-title">⚙️ 삭제 조건</h3>
-
+        <h3 class="cc-card-title">⚙️ 캐시 삭제 조건</h3>
         <div class="cc-settings-field">
           <label for="cc-cache-dir">캐시 폴더 경로 <em>*</em></label>
           <div class="cc-input-container">
@@ -41,7 +48,6 @@
             <p class="hint">정리 대상이 되는 캐시 폴더의 경로입니다.</p>
           </div>
         </div>
-
         <div class="cc-settings-field">
           <label for="cc-max-age">파일 삭제 기준 (시간)</label>
           <div class="cc-input-container">
@@ -49,7 +55,6 @@
             <p class="hint">생성(수정)된 지 이 시간 이상 지난 파일을 개별 삭제합니다.</p>
           </div>
         </div>
-
         <div class="cc-settings-field">
           <label for="cc-max-size">전체 삭제 기준 용량 (GB)</label>
           <div class="cc-input-container">
@@ -57,7 +62,44 @@
             <p class="hint">캐시 폴더 총 용량이 이 값 이상이면 파일 나이와 무관하게 전체 삭제합니다.</p>
           </div>
         </div>
+      </section>
 
+      <!-- 삭제 조건 : 로그 -->
+      <section class="cc-card">
+        <h3 class="cc-card-title">⚙️ 로그 삭제 조건</h3>
+        <div class="cc-settings-field cc-settings-field-checkbox">
+          <label for="cc-enable-log">
+            <input id="cc-enable-log" type="checkbox" name="ENABLE_LOG_CLEANUP" />
+            로그 폴더도 함께 정리
+          </label>
+          <p class="hint">체크하면 아래 로그 폴더 경로/조건에 따라 캐시와 같은 잡(스케줄)에서 로그도 정리합니다.</p>
+        </div>
+        <div class="cc-settings-field">
+          <label for="cc-log-dir">로그 폴더 경로</label>
+          <div class="cc-input-container">
+            <input id="cc-log-dir" type="text" name="LOG_DIR" placeholder="logs" />
+            <p class="hint">정리 대상이 되는 로그 폴더의 경로입니다. (로그 정리 사용 시 필수)</p>
+          </div>
+        </div>
+        <div class="cc-settings-field">
+          <label for="cc-log-max-age">파일 삭제 기준 (시간)</label>
+          <div class="cc-input-container">
+            <input id="cc-log-max-age" type="text" name="LOG_MAX_AGE_HOURS" placeholder="24" />
+            <p class="hint">생성(수정)된 지 이 시간 이상 지난 로그 파일을 개별 삭제합니다.</p>
+          </div>
+        </div>
+        <div class="cc-settings-field">
+          <label for="cc-log-max-size">전체 삭제 기준 용량 (GB)</label>
+          <div class="cc-input-container">
+            <input id="cc-log-max-size" type="text" name="LOG_MAX_SIZE_GB" placeholder="1" />
+            <p class="hint">로그 폴더 총 용량이 이 값 이상이면 파일 나이와 무관하게 전체 삭제합니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 실행 주기 -->
+      <section class="cc-card">
+        <h3 class="cc-card-title">⏱ 실행 주기</h3>
         <div class="cc-settings-field">
           <label for="cc-interval">자동 점검 주기 (분)</label>
           <div class="cc-input-container">
@@ -65,12 +107,11 @@
             <p class="hint">아래 Cron 표현식이 비어있을 때만 사용되는 반복 주기입니다.</p>
           </div>
         </div>
-
         <div class="cc-settings-field">
           <label for="cc-cron">Cron 표현식 (선택)</label>
           <div class="cc-input-container">
             <input id="cc-cron" type="text" name="CRON_SCHEDULE" placeholder="예: 0 3 * * * (매일 새벽 3시)" />
-            <p class="hint">값을 입력하면 위 주기(분) 설정 대신 이 crontab 표현식으로 동작합니다.</p>
+            <p class="hint">값을 입력하면 위 주기(분) 설정 대신 이 crontab 표현식으로 동작합니다. (캐시/로그 공통 스케줄)</p>
           </div>
         </div>
 

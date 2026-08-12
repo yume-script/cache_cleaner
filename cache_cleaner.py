@@ -2,11 +2,16 @@
 """
 cache_cleaner 플러그인
 ----------------------
-특정 조건이 되면 cache 폴더를 정리하는 대시보드형 플러그인.
+특정 조건이 되면 cache 폴더(+ 선택적으로 log 폴더)를 정리하는 대시보드형 플러그인.
 
 조건 01: 생성(수정)된 지 1일(24시간) 이상 지난 파일 -> 개별 삭제
-조건 02: cache 폴더 전체 용량이 설정 임계값(기본 10GB) 이상 -> 폴더 내 파일 전체 삭제
+조건 02: 대상 폴더 전체 용량이 설정 임계값(기본 10GB) 이상 -> 폴더 내 파일 전체 삭제
 (두 조건은 OR. 단, 조건 02가 만족되면 조건 01은 무시하고 전체 삭제)
+
+이 규칙은 캐시 폴더(CACHE_DIR)와 로그 폴더(LOG_DIR)에 각각 독립적으로 적용된다.
+로그 폴더 정리는 기본적으로 꺼져 있으며(ENABLE_LOG_CLEANUP=False), 켜면
+LOG_DIR/LOG_MAX_AGE_HOURS/LOG_MAX_SIZE_GB 설정에 따라 캐시와 같은 잡(job)
+안에서 함께 정리된다.
 
 ## 실행 방식 (APScheduler 연동)
 자체 스레드로 time.sleep 루프를 도는 대신, 코어가 이미 쓰고 있는
@@ -28,9 +33,9 @@ APScheduler가 수행하고, 워치독은 등록 상태만 감시).
 예전처럼 자체 스레드 루프로 폴백한다.
 
 실행 여부는 아래에서 확인 가능하다.
-  1) 설정 화면(settings.html): 마지막 실행 시각 / 결과
-  2) 로그 파일: <CACHE_DIR>/../cache_cleaner.log
-     (예: [2026-08-08 03:00:01] mode=age_based deleted=12 total_before_gb=3.21)
+1) 설정 화면(settings.html): 마지막 실행 시각 / 결과 (캐시 + 로그 각각)
+2) 로그 파일: <CACHE_DIR>/../cache_cleaner.log
+   (예: [2026-08-08 03:00:01] mode=age_based deleted=12 total_before_gb=3.21)
 
 수동으로 즉시 실행하고 싶다면 clean_cache(db_type)를 직접 호출하면 된다.
 """
@@ -73,17 +78,45 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         },
         {
             "key": "MAX_AGE_HOURS",
-            "label": "파일 삭제 기준 (시간)",
+            "label": "캐시: 파일 삭제 기준 (시간)",
             "type": "text",
             "required": False,
             "default": "24",
         },
         {
             "key": "MAX_SIZE_GB",
-            "label": "전체 삭제 기준 용량 (GB)",
+            "label": "캐시: 전체 삭제 기준 용량 (GB)",
             "type": "text",
             "required": False,
             "default": "10",
+        },
+        {
+            "key": "ENABLE_LOG_CLEANUP",
+            "label": "로그 폴더도 정리",
+            "type": "checkbox",
+            "required": False,
+            "default": False,
+        },
+        {
+            "key": "LOG_DIR",
+            "label": "로그 폴더 경로 (로그 정리 사용 시 필수)",
+            "type": "text",
+            "required": False,
+            "default": "logs",
+        },
+        {
+            "key": "LOG_MAX_AGE_HOURS",
+            "label": "로그: 파일 삭제 기준 (시간)",
+            "type": "text",
+            "required": False,
+            "default": "24",
+        },
+        {
+            "key": "LOG_MAX_SIZE_GB",
+            "label": "로그: 전체 삭제 기준 용량 (GB)",
+            "type": "text",
+            "required": False,
+            "default": "1",
         },
         {
             "key": "CHECK_INTERVAL_MINUTES",
@@ -319,6 +352,25 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
             interval_min = 60.0
         return cache_dir, max_age_hours, max_size_gb, interval_min
 
+    def _get_log_settings(self, db_type):
+        """
+        로그 폴더 정리 설정. ENABLE_LOG_CLEANUP이 꺼져있거나 LOG_DIR이
+        비어있으면 enabled=False로 반환한다.
+        """
+        cfg = self.get_plugin_config(db_type, default={})
+        enabled = bool(cfg.get("ENABLE_LOG_CLEANUP") or False)
+        log_dir = (cfg.get("LOG_DIR") or "").strip()
+        try:
+            max_age_hours = float(cfg.get("LOG_MAX_AGE_HOURS") or 24)
+        except (TypeError, ValueError):
+            max_age_hours = 24.0
+        try:
+            max_size_gb = float(cfg.get("LOG_MAX_SIZE_GB") or 1)
+        except (TypeError, ValueError):
+            max_size_gb = 1.0
+        enabled = enabled and bool(log_dir)
+        return enabled, log_dir, max_age_hours, max_size_gb
+
     def _state_path(self, cache_dir):
         parent = os.path.dirname(os.path.abspath(cache_dir.rstrip("/\\"))) or "."
         return os.path.join(parent, "cache_cleaner_state.json")
@@ -332,16 +384,18 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         cache_dir = cfg.get("CACHE_DIR") or "cache"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # 실행 이력 파일(로그) 기록
+        # 실행 이력 파일(로그) 기록 - 캐시/로그 타겟이 있으면 타겟별로 한 줄씩 남긴다.
         try:
-            line = (
-                f"[{ts}] mode={result.get('mode')} "
-                f"deleted={result.get('deleted_count', 0)} "
-                f"total_before_gb={round(result.get('total_size_before', 0) / (1024**3), 3)} "
-                f"errors={len(result.get('errors', []))}"
-            )
+            targets = result.get("targets") or {"cache": result}
             with open(self._log_path(cache_dir), "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+                for target_name, target_result in targets.items():
+                    line = (
+                        f"[{ts}] target={target_name} mode={target_result.get('mode')} "
+                        f"deleted={target_result.get('deleted_count', 0)} "
+                        f"total_before_gb={round(target_result.get('total_size_before', 0) / (1024**3), 3)} "
+                        f"errors={len(target_result.get('errors', []))}"
+                    )
+                    f.write(line + "\n")
         except OSError:
             pass
 
@@ -372,15 +426,14 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
             return None
 
     # ------------------------------------------------------------------
-    # 캐시 스캔
+    # 폴더 스캔
     # ------------------------------------------------------------------
-    def _scan(self, cache_dir):
+    def _scan(self, target_dir):
         entries = []
         total_size = 0
-        if not os.path.isdir(cache_dir):
+        if not os.path.isdir(target_dir):
             return entries, total_size
-
-        for root, _dirs, files in os.walk(cache_dir):
+        for root, _dirs, files in os.walk(target_dir):
             for fname in files:
                 fpath = os.path.join(root, fname)
                 try:
@@ -389,14 +442,13 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
                     continue
                 entries.append((fpath, st.st_size, st.st_mtime))
                 total_size += st.st_size
-
         return entries, total_size
 
-    def _remove_empty_dirs(self, cache_dir):
-        if not os.path.isdir(cache_dir):
+    def _remove_empty_dirs(self, target_dir):
+        if not os.path.isdir(target_dir):
             return
-        for root, _dirs, _files in os.walk(cache_dir, topdown=False):
-            if root == cache_dir:
+        for root, _dirs, _files in os.walk(target_dir, topdown=False):
+            if root == target_dir:
                 continue
             try:
                 if not os.listdir(root):
@@ -405,12 +457,15 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
                 pass
 
     # ------------------------------------------------------------------
-    # 정리 로직 (조건 01 / 조건 02) — 수동 호출도 가능
+    # 정리 로직 (조건 01 / 조건 02) — 캐시/로그 공용
     # ------------------------------------------------------------------
-    def clean_cache(self, db_type):
-        cache_dir, max_age_hours, max_size_gb, _interval = self._get_settings(db_type)
-        entries, total_size = self._scan(cache_dir)
-
+    def _clean_target(self, target_dir, max_age_hours, max_size_gb):
+        """
+        폴더 하나(캐시 또는 로그)에 조건01/조건02를 적용해서 정리한다.
+        cache_dir가 존재하지 않아도(아직 안 만들어졌어도) 조용히 빈 결과를
+        반환한다 - 로그 폴더처럼 선택적인 타겟에서 필요하다.
+        """
+        entries, total_size = self._scan(target_dir)
         max_size_bytes = max_size_gb * (1024 ** 3)
         now = time.time()
         max_age_seconds = max_age_hours * 3600
@@ -418,7 +473,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         deleted_files = []
         errors = []
 
-        if total_size >= max_size_bytes:
+        if total_size >= max_size_bytes and entries:
             mode = "size_exceeded"  # 조건 02
             for fpath, _size, _mtime in entries:
                 try:
@@ -436,15 +491,50 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
                     except OSError as e:
                         errors.append(f"{fpath}: {e}")
 
-        self._remove_empty_dirs(cache_dir)
+        self._remove_empty_dirs(target_dir)
 
         return {
             "mode": mode,
-            "cache_dir": cache_dir,
+            "target_dir": target_dir,
             "total_size_before": total_size,
             "deleted_count": len(deleted_files),
             "deleted_files": deleted_files,
             "errors": errors,
+        }
+
+    def clean_cache(self, db_type):
+        """
+        캐시 폴더를 정리하고, 로그 정리가 켜져 있으면 로그 폴더도 같이
+        정리한다. 반환값은 하위 호환을 위해 top-level에 캐시 기준 필드를
+        그대로 유지하되(mode/deleted_count/total_size_before/errors는
+        두 타겟 합계), 'targets' 아래에 캐시/로그 각각의 상세 결과를 담는다.
+        """
+        cache_dir, cache_max_age, cache_max_size, _interval = self._get_settings(db_type)
+        cache_result = self._clean_target(cache_dir, cache_max_age, cache_max_size)
+
+        targets = {"cache": cache_result}
+
+        log_enabled, log_dir, log_max_age, log_max_size = self._get_log_settings(db_type)
+        if log_enabled:
+            log_result = self._clean_target(log_dir, log_max_age, log_max_size)
+            targets["log"] = log_result
+
+        combined_deleted = sum(t["deleted_count"] for t in targets.values())
+        combined_errors = []
+        for t in targets.values():
+            combined_errors.extend(t["errors"])
+        combined_total_size = sum(t["total_size_before"] for t in targets.values())
+        # 여러 타겟 중 하나라도 size_exceeded면 상위 mode도 그렇게 표기
+        combined_mode = "size_exceeded" if any(t["mode"] == "size_exceeded" for t in targets.values()) else "age_based"
+
+        return {
+            "mode": combined_mode,
+            "cache_dir": cache_dir,
+            "total_size_before": combined_total_size,
+            "deleted_count": combined_deleted,
+            "deleted_files": cache_result["deleted_files"],
+            "errors": combined_errors,
+            "targets": targets,
         }
 
     # ------------------------------------------------------------------
@@ -452,14 +542,9 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
     # ------------------------------------------------------------------
     def get_status(self, db_type):
         """
-        캐시 상태 요약. dashboard_widget을 없앴으므로 홈 대시보드 카드용이
-        아니라, 설정 화면(settings.js)이 직접 호출해서 쓰는 순수 데이터다.
-
-        NOTE: 실제로 이 메서드를 어떤 라우트가 호출하게 할지는 코어 쪽 구현에
-        달려 있다. 문서에 있는 기존 엔드포인트
-        `/api/media/dashboard/widgets/<plugin_id>/data`가 dashboard_widget이
-        없어도 이 메서드(또는 get_dashboard_data)를 그대로 불러주는지 확인
-        필요. 안 불러준다면 별도 라우트를 코어에 추가해야 한다.
+        캐시(+로그) 상태 요약. dashboard_widget을 없앴으므로 홈 대시보드
+        카드용이 아니라, 설정 화면(settings.js)이 직접 호출해서 쓰는 순수
+        데이터다.
         """
         # on_enable 훅이 코어에 없을 경우를 대비한 지연 등록 폴백
         try:
@@ -473,7 +558,6 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
 
         cache_dir, max_age_hours, max_size_gb, interval_min = self._get_settings(db_type)
         entries, total_size = self._scan(cache_dir)
-
         now = time.time()
         max_age_seconds = max_age_hours * 3600
         stale_count = sum(1 for _f, _s, m in entries if (now - m) >= max_age_seconds)
@@ -482,6 +566,9 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         state = self._read_state(cache_dir) or {}
         last_run = state.get("last_run", "아직 실행 안 됨")
         last_result = state.get("last_result") or {}
+        last_targets = last_result.get("targets") or {}
+        last_cache_result = last_targets.get("cache", last_result)
+        last_log_result = last_targets.get("log", {})
 
         # 코어 APScheduler에 등록된 잡이면 다음 실행 예정 시각을 그대로 읽어온다.
         next_run = None
@@ -498,7 +585,7 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
         cfg = self.get_plugin_config(db_type, default={})
         cron_expr = (cfg.get("CRON_SCHEDULE") or "").strip()
 
-        return {
+        status = {
             "success": True,
             "cache_dir": cache_dir,
             "size_gb": size_gb,
@@ -512,10 +599,42 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
             "last_run": last_run,
             "last_mode": last_result.get("mode", "-"),
             "last_deleted_count": last_result.get("deleted_count", 0),
+            "last_cache_deleted_count": last_cache_result.get("deleted_count", 0),
             "next_run": next_run or "확인 불가 (폴백 스레드 모드)",
             "scheduler_backend": scheduler_backend,
             "last_run_now_token": (state or {}).get("last_run_now_token"),
         }
+
+        # 로그 폴더 상태 (사용 설정된 경우에만 스캔)
+        log_enabled, log_dir, log_max_age_hours, log_max_size_gb = self._get_log_settings(db_type)
+        status["log_enabled"] = log_enabled
+        status["log_dir"] = log_dir or None
+        status["log_max_age_hours"] = log_max_age_hours
+        status["log_max_size_gb"] = log_max_size_gb
+        if log_enabled:
+            log_entries, log_total_size = self._scan(log_dir)
+            log_max_age_seconds = log_max_age_hours * 3600
+            log_stale_count = sum(1 for _f, _s, m in log_entries if (now - m) >= log_max_age_seconds)
+            log_size_gb = round(log_total_size / (1024 ** 3), 3)
+            status.update({
+                "log_size_gb": log_size_gb,
+                "log_file_count": len(log_entries),
+                "log_stale_count": log_stale_count,
+                "log_will_full_clear": log_size_gb >= log_max_size_gb,
+                "log_last_mode": last_log_result.get("mode", "-"),
+                "log_last_deleted_count": last_log_result.get("deleted_count", 0),
+            })
+        else:
+            status.update({
+                "log_size_gb": None,
+                "log_file_count": None,
+                "log_stale_count": None,
+                "log_will_full_clear": None,
+                "log_last_mode": "-",
+                "log_last_deleted_count": 0,
+            })
+
+        return status
 
     # 기존에 이미 동작이 확인된 엔드포인트
     # (`/api/media/dashboard/widgets/<plugin_id>/data`)를 그대로 재사용해서
@@ -550,5 +669,4 @@ class CacheCleanerMetadataProvider(BaseMetadataProvider):
             result = self.clean_cache(db_type)
             self._log(db_type, result)
             return {"success": True, "result": result}
-
         return {"success": False, "error": f"알 수 없는 action: {action}"}

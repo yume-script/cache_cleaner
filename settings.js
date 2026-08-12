@@ -1,9 +1,6 @@
 (function () {
   "use strict";
 
-  // NOTE: 호스트가 플러그인 UI에 현재 plugin_id / db_type을 전역변수로 주입해
-  // 준다는 보장이 없어서, 우선 합리적인 기본값 + URL 쿼리 폴백으로 처리한다.
-  // 실제로 호스트가 다른 방식(예: data-* 속성)을 쓴다면 여기를 맞춰야 한다.
   var PLUGIN_ID = window.CURRENT_PLUGIN_ID || "cache_cleaner";
   var DB_TYPE =
     window.CURRENT_DB_TYPE ||
@@ -11,6 +8,8 @@
     "general";
 
   var statusEl = document.getElementById("cc-status");
+  var logStatusSectionEl = document.getElementById("cc-log-status-section");
+  var logStatusEl = document.getElementById("cc-log-status");
   var refreshBtn = document.getElementById("cc-refresh-btn");
   var cleanBtn = document.getElementById("cc-clean-btn");
   var cleanResultEl = document.getElementById("cc-clean-result");
@@ -69,11 +68,51 @@
         "</div>";
     }
     statusEl.innerHTML = html;
+
+    renderLogStatus(data);
+  }
+
+  function renderLogStatus(data) {
+    if (!logStatusSectionEl || !logStatusEl) return;
+
+    if (!data.log_enabled) {
+      logStatusSectionEl.style.display = "none";
+      return;
+    }
+    logStatusSectionEl.style.display = "";
+
+    var html = "";
+    html += statusItem("로그 경로", data.log_dir);
+    html += statusItem(
+      "총 용량",
+      data.log_size_gb + " GB / " + data.log_max_size_gb + " GB",
+      data.log_will_full_clear
+    );
+    html += statusItem("총 파일 수", data.log_file_count + "개");
+    html += statusItem(
+      data.log_max_age_hours + "시간 이상 경과 파일",
+      data.log_stale_count + "개"
+    );
+    html += statusItem("마지막 실행", data.last_run);
+    html += statusItem(
+      "마지막 결과",
+      data.log_last_mode + " / 삭제 " + data.log_last_deleted_count + "건"
+    );
+    if (data.log_will_full_clear) {
+      html +=
+        '<div class="cc-status-item cc-status-warn">' +
+        '<span class="cc-status-label">⚠ 다음 자동 점검 시</span>' +
+        '<span class="cc-status-value">용량 초과로 전체 삭제됩니다</span>' +
+        "</div>";
+    }
+    logStatusEl.innerHTML = html;
   }
 
   function loadStatus() {
     statusEl.innerHTML = '<div class="cc-status-loading">불러오는 중...</div>';
-    // 이미 동작이 확인된 위젯 데이터 엔드포인트를 재사용한다.
+    if (logStatusEl) {
+      logStatusEl.innerHTML = '<div class="cc-status-loading">불러오는 중...</div>';
+    }
     fetch(
       "/api/media/dashboard/widgets/" +
         PLUGIN_ID +
@@ -101,7 +140,13 @@
     var form = document.querySelectorAll(".cc-settings-field input");
     var config = {};
     form.forEach(function (input) {
-      config[input.name] = input.value;
+      // 체크박스(ENABLE_LOG_CLEANUP 등)는 value가 아니라 checked 상태를
+      // boolean으로 실어 보낸다. 그 외 text 입력은 기존과 동일하게 처리.
+      if (input.type === "checkbox") {
+        config[input.name] = input.checked;
+      } else {
+        config[input.name] = input.value;
+      }
     });
     return config;
   }
@@ -127,11 +172,6 @@
       });
   }
 
-  // NOTE: 백엔드에 "즉시 실행" 전용 액션 엔드포인트가 없어서(확인됨: 404),
-  // 이미 동작하는 save-config 엔드포인트를 재사용하는 우회 방식을 쓴다.
-  // config에 RUN_NOW_TOKEN(타임스탬프)을 실어 저장하면, 플러그인 내부의
-  // 5초 주기 폴러가 토큰 변경을 감지해서 바로 정리를 실행한다.
-  // 그래서 버튼을 눌러도 완전히 즉시는 아니고 최대 수 초 지연이 있다.
   function runCleanNow() {
     cleanBtn.disabled = true;
     cleanResultEl.textContent = "실행 요청 중...";
@@ -156,7 +196,7 @@
   }
 
   function pollForRunNowCompletion(token, attempt) {
-    var MAX_ATTEMPTS = 12; // 12 * 2초 = 최대 24초 대기
+    var MAX_ATTEMPTS = 12;
     fetch(
       "/api/media/dashboard/widgets/" +
         PLUGIN_ID +
@@ -171,7 +211,16 @@
           cleanBtn.disabled = false;
           var mode = data.last_mode;
           var deleted = data.last_deleted_count || 0;
-          cleanResultEl.textContent = "완료 — 모드: " + mode + ", 삭제 " + deleted + "건";
+          var msg = "완료 — 모드: " + mode + ", 삭제 " + deleted + "건";
+          if (data.log_enabled) {
+            msg +=
+              " (캐시) / 로그 " +
+              (data.log_last_mode || "-") +
+              " / 삭제 " +
+              (data.log_last_deleted_count || 0) +
+              "건 (로그)";
+          }
+          cleanResultEl.textContent = msg;
           cleanResultEl.className = "cc-clean-result cc-result-ok";
           renderStatus(data);
           return;
